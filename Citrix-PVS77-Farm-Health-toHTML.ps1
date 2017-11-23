@@ -1,5 +1,5 @@
 #==============================================================================================
-# Created on: 12/2015            Version: 1.3
+# Created on: 12/2015            Version: 1.3.1
 # Created by: Sacha Thomet, blog.appcloud.ch / sachathomet.ch
 # Filename: Citrix-PVS77-Farm-Health-toHTML.ps1
 #
@@ -33,13 +33,17 @@
 #      		  - Configuration via an XML file
 #      		  - Redefined display the date for the report
 #      		  - Replaced generate the date in the second place by variable
+#      	V1.3.1: 
+#      		  - Fix for Cache to Ram which is in yellow even then all is ok
 #
+#==============================================================================================
+
+#Don't change below here if you don't know what you are doing ... 
 #==============================================================================================
 if ((Get-PSSnapin "Citrix.PVS.SnapIn" -EA silentlycontinue) -eq $null) {
 try { Add-PSSnapin Citrix.PVS.SnapIn -ErrorAction Stop }
 catch { write-error "Error loading Citrix.PVS.SnapIn PowerShell snapin"; Return }
 }
-# Change the below variables to suit your environment
 #==============================================================================================
 # Import Variables from XML:
 If (![string]::IsNullOrEmpty($hostinvocation)) {
@@ -92,33 +96,6 @@ Function New-XMLVariables {
 New-XMLVariables
 
 $ReportDate = (Get-Date -UFormat "%A, %d. %B %Y %R")
-
-# 
-# Information about the site you want to check:    --------------------------------------------
-#$siteName="Unico Cloud" # site name on which the according Store is.
-# Target Device Health Check threshold:            --------------------------------------------
-#$retrythresholdWarning= "15" # define the Threshold from how many retries the color switch to red
-# 
-# Include for Device Collections, type "every" if you want to see every Collection 
-# Example1: $Collections = @("XA65","XA7")
-# Example2: $Collections = @("every")
-#$Collections = @("every")
-# 
-# Information about your Email infrastructure:      --------------------------------------------
-# E-mail report details
-#$emailFrom = "email@company.ch"
-#$emailTo = "citrix@company.ch"#,"sacha.thomet@appcloud.ch"
-#$smtpServer = "mailrelay.company.ch"
-#$emailSubjectStart = "PVS Farm Report"
-#$mailprio = "High"
-# 
-# Check's &amp;amp; Jobs you want to perform
-#$PerformPVSvDiskCheck = "yes"
-#$PerformPVSTargetCheck = "yes"
-#$PerformSendMail = "yes"
-# 
-# 
-#Don't change below here if you don't know what you are doing ... 
 #==============================================================================================
  
 $currentDir = Split-Path $MyInvocation.MyCommand.Path
@@ -217,10 +194,9 @@ Function CheckMemoryUsage()
     	$TotalRAM = $SystemInfo.TotalVisibleMemorySize/1MB 
     	$FreeRAM = $SystemInfo.FreePhysicalMemory/1MB 
     	$UsedRAM = $TotalRAM - $FreeRAM 
-    	$RAMPercentUsed = ($UsedRAM / $TotalRAM) * 100 
-    	$RAMPercentUsed = "{0:N2}" -f $RAMPercentUsed
+    	$RAMPercentUsed = ($UsedRAM / $TotalRAM)
     	return $RAMPercentUsed
-	} Catch { "Error returned while checking the Memory usage. Perfmon Counters may be fault" | LogMe -error; return 101 } 
+	} Catch { "Error returned while checking the Memory usage. Perfmon Counters may be fault" | LogMe -error; return 1.01f } 
 }
 #==============================================================================================
 Function writeHtmlHeader
@@ -443,11 +419,11 @@ else { $PVStests.Ping = "SUCCESS", $result
 
         # Check the Physical Memory usage       
         $UsedMemory = CheckMemoryUsage ($PVServerName_short)
-        if( [int] $UsedMemory -lt 75) { "Memory usage is normal [ $UsedMemory % ]" | LogMe -display; $PVStests.MemUsg = "SUCCESS", "$UsedMemory %" }
-		elseif([int] $UsedMemory -lt 85) { "Memory usage is medium [ $UsedMemory % ]" | LogMe -warning; $PVStests.MemUsg = "WARNING", "$UsedMemory %" }   	
-		elseif([int] $UsedMemory -lt 95) { "Memory usage is high [ $UsedMemory % ]" | LogMe -error; $PVStests.MemUsg = "ERROR", "$UsedMemory %" }
-		elseif([int] $UsedMemory -eq 101) { "Memory usage test failed" | LogMe -error; $PVStests.MemUsg = "ERROR", "Err" }
-        else { "Memory usage is Critical [ $UsedMemory % ]" | LogMe -error; $PVStests.MemUsg = "ERROR", "$UsedMemory %" }   
+        if( $UsedMemory -lt 0.75) { "Memory usage is normal [ {0:p2} ]" -f $UsedMemory | LogMe -display; $PVStests.MemUsg = "SUCCESS", "{0:p2} ]" -f $UsedMemory }
+		elseif($UsedMemory -lt 0.85) { "Memory usage is medium [ {0:p2} ]" -f $UsedMemory | LogMe -warning; $PVStests.MemUsg = "WARNING", "{0:p2} ]" -f $UsedMemory }   	
+		elseif($UsedMemory -lt 0.95) { "Memory usage is high [ {0:p2} ]" -f $UsedMemory | LogMe -error; $PVStests.MemUsg = "ERROR", "{0:p2} ]" -f $UsedMemory }
+		elseif($UsedMemory -eq 1.01) { "Memory usage test failed" | LogMe -error; $PVStests.MemUsg = "ERROR", "Err" }
+        else { "Memory usage is Critical [ {0:p2} ]" -f $UsedMemory | LogMe -error; $PVStests.MemUsg = "ERROR", "{0:p2} ]" -f $UsedMemory }   
 		$UsedMemory = 0  
 
         foreach ($disk in $diskLetters)
@@ -721,7 +697,7 @@ $tests = @{}
 			If ($wconhd -eq '$WriteCacheType=4')
 			{Write-Host Cache on HDD
 			
-			#WWC on HD is $wconhd
+			#WWC on HD is $wconhd 4=DeviceHD
 
 				# Relative path to the PVS vDisk write cache file
 				$PvsWriteCache   = "d$\.vdiskcache"
@@ -736,19 +712,21 @@ $tests = @{}
 					$CacheDiskGB = "{0:n2}GB" -f($CacheDisk / 1GB)
 					"PVS Cache file size: {0:n2}GB" -f($CacheDisk / 1GB) | LogMe
 					#"PVS Cache max size: {0:n2}GB" -f($PvsWriteMaxSize / 1GB) | LogMe -display
-					if($CacheDisk -lt ($PvsWriteMaxSize * 0.5))
+					
+
+                    if($CacheDiskGB -lt ($PvsWriteMaxSize * 0.5))
 					{
-					   "WriteCache file size is low" | LogMe
+					   "WriteCache on HD file size is low with $CacheDiskGB" | LogMe -display -progress
 					   $tests.WriteCache = "SUCCESS", $CacheDiskGB
 					}
-					elseif($CacheDisk -lt ($PvsWriteMaxSize * 0.8))
+					elseif($CacheDiskGB -lt ($PvsWriteMaxSize * 0.8))
 					{
-					   "WriteCache file size moderate" | LogMe -display -warning
+					   "WriteCache on HD file size moderate with $CacheDiskGB" | LogMe -display -warning
 					   $tests.WriteCache = "WARNING", $CacheDiskGB
 					}   
 					else
 					{
-					   "WriteCache file size is high" | LogMe -display -error
+					   "WriteCache on HD file size is high with $CacheDiskGB" | LogMe -display -error
 					   $tests.WriteCache = "ERORR", $CacheDiskGB
 					}
 				}              
@@ -768,7 +746,7 @@ $tests = @{}
 			elseif ($wconhd -eq '$WriteCacheType=9')
             		{
             			Write-Host Cache on RAM with overflow
-				#RAMCache
+				#RAMCache 9=RamOfToHD
 				#Get-RamCache from each target, code from Matthew Nics http://mattnics.com/?p=414
 				$RAMCache = [math]::truncate((Get-WmiObject Win32_PerfFormattedData_PerfOS_Memory -ComputerName $targetName).PoolNonPagedBytes /1MB)
 			
@@ -776,6 +754,9 @@ $tests = @{}
 				$PvsWriteCache   = "d$\vdiskdif.vhdx"
 				# Size of the local PVS write cache drive
 				$PvsWriteMaxSize = 10gb # size in GB
+
+                 $HDDwarning = $false
+                  $HDDerror = $false
 			
 				$PvsWriteCacheUNC = Join-Path "\\$targetName" $PvsWriteCache 
 				$CacheDiskexists  = Test-Path $PvsWriteCacheUNC
@@ -785,21 +766,22 @@ $tests = @{}
 					$CacheDiskGB = "{0:n2} GB" -f($CacheDisk / 1GB)
 					"PVS Cache file size: {0:n2} GB" -f($CacheDisk / 1GB) | LogMe
 					#"PVS Cache max size: {0:n2}GB" -f($PvsWriteMaxSize / 1GB) | LogMe -display
-					if($CacheDisk -lt ($PvsWriteMaxSize * 0.5))
+					if($CacheDiskGB -lt ($PvsWriteMaxSize * 0.5))
 					{
-					   "WriteCache file size is low" | LogMe
-					   $tests.WriteCache = "SUCCESS", $CacheDiskGB
+					   "WriteCache on RAM size is low with $CacheDiskGB" | LogMe -display -progress
+
+					    $tests.WriteCache = "SUCCESS", $CacheDiskGB
 					}
-					elseif($CacheDisk -lt ($PvsWriteMaxSize * 0.8))
+					elseif($CacheDiskGB -lt ($PvsWriteMaxSize * 0.8))
 					{
-					   "WriteCache file size moderate" | LogMe -display -warning
+					   "WriteCache on RAM size moderate with $CacheDiskGB" | LogMe -display -warning
 					   $HDDwarning = $true
 					   $tests.WriteCache = "WARNING", $CacheDiskGB
 					}   
 					else
 					{
-					   "WriteCache file size is high" | LogMe -display -error
-                        		   $HDDerror = $true
+					   "WriteCache on RAM  size is high with $CacheDiskGB" | LogMe -display -error
+                       $HDDerror = $true
 					   $tests.WriteCache = "ERORR", $CacheDiskGB
 					}
 				}              
